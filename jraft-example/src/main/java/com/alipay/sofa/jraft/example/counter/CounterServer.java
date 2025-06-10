@@ -16,21 +16,22 @@
  */
 package com.alipay.sofa.jraft.example.counter;
 
+import java.io.File;
+import java.io.IOException;
+
+import org.apache.commons.io.FileUtils;
+
 import com.alipay.sofa.jraft.Node;
 import com.alipay.sofa.jraft.RaftGroupService;
 import com.alipay.sofa.jraft.conf.Configuration;
 import com.alipay.sofa.jraft.entity.PeerId;
+import com.alipay.sofa.jraft.example.counter.rpc.CounterGrpcHelper;
 import com.alipay.sofa.jraft.example.counter.rpc.CounterOutter.ValueResponse;
 import com.alipay.sofa.jraft.example.counter.rpc.GetValueRequestProcessor;
-import com.alipay.sofa.jraft.example.counter.rpc.CounterGrpcHelper;
 import com.alipay.sofa.jraft.example.counter.rpc.IncrementAndGetRequestProcessor;
 import com.alipay.sofa.jraft.option.NodeOptions;
 import com.alipay.sofa.jraft.rpc.RaftRpcServerFactory;
 import com.alipay.sofa.jraft.rpc.RpcServer;
-import org.apache.commons.io.FileUtils;
-
-import java.io.File;
-import java.io.IOException;
 
 /**
  * Counter server that keeps a counter value in a raft group.
@@ -75,6 +76,33 @@ public class CounterServer {
         this.raftGroupService = new RaftGroupService(groupId, serverId, nodeOptions, rpcServer);
         // start raft node
         this.node = this.raftGroupService.start();
+        Thread thread = new Thread(() -> {
+            final NodeOptions nodeOptions2 = new NodeOptions();
+            // for test, modify some params
+            // set election timeout to 1s
+            nodeOptions2.setElectionTimeoutMs(1000);
+            // disable CLI service。
+            nodeOptions2.setDisableCli(false);
+            // do snapshot every 30s
+            nodeOptions2.setSnapshotIntervalSecs(30);
+            // set fsm to nodeOptions
+            nodeOptions2.setFsm(new CounterStateMachine());
+            // set storage path (log,meta,snapshot)
+            // log, must
+            nodeOptions2.setLogUri(dataPath + "-1" + File.separator + "log");
+            // meta, must
+            nodeOptions2.setRaftMetaUri(dataPath + "-1" + File.separator + "raft_meta");
+            // snapshot, optional, generally recommended
+            nodeOptions2.setSnapshotUri(dataPath + "-1" + File.separator + "snapshot");
+            nodeOptions2.setInitialConf(nodeOptions.getInitialConf());
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            new RaftGroupService(groupId + "-1", serverId, nodeOptions2, rpcServer).start(false);
+        });
+        thread.start();
     }
 
     public CounterStateMachine getFsm() {
@@ -103,7 +131,7 @@ public class CounterServer {
         return builder.build();
     }
 
-    public static void main(final String[] args) throws IOException {
+    public static void main( String[] args) throws IOException {
         if (args.length != 4) {
             System.out
                 .println("Usage : java com.alipay.sofa.jraft.example.counter.CounterServer {dataPath} {groupId} {serverId} {initConf}");
